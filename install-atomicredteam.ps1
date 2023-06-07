@@ -1,6 +1,6 @@
 #Requires -Version 5.0
 function Install-AtomicRedTeam {
-  
+
     <#
     .SYNOPSIS
 
@@ -58,14 +58,14 @@ function Install-AtomicRedTeam {
         [switch]$NoPayloads = $False # only download atomic yaml files during -getAtomics operation (no /src or /bin dirs)
     )
     Try {
-        (New-Object System.Net.WebClient).Proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
+        $httpClient = [System.Net.Http.HttpClient]::new()
 
         $InstallPathwIart = Join-Path $InstallPath "invoke-atomicredteam"
         $modulePath = Join-Path "$InstallPath" "invoke-atomicredteam\Invoke-AtomicRedTeam.psd1"
         if ($Force -or -Not (Test-Path -Path $InstallPathwIart )) {
-            write-verbose "Directory Creation"
+            Write-Verbose "Directory Creation"
             if ($Force) {
-                Try { 
+                Try {
                     if (Test-Path $InstallPathwIart) { Remove-Item -Path $InstallPathwIart -Recurse -Force -ErrorAction Stop | Out-Null }
                 }
                 Catch {
@@ -78,9 +78,42 @@ function Install-AtomicRedTeam {
             $url = "https://github.com/$RepoOwner/invoke-atomicredteam/archive/$Branch.zip"
             $path = Join-Path $DownloadPath "$Branch.zip"
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            write-verbose "Beginning download from Github"
-            Invoke-WebRequest $url -OutFile $path
+            Write-Verbose "Beginning download from Github"
+            $httpClient.DownloadFile($url, $path)
 
-            write-verbose "Extracting ART to $InstallPath"
+            Write-Verbose "Extracting ART to $InstallPath"
             $zipDest = Join-Path "$DownloadPath" "tmp"
-            Expand-Archive -Path $path -DestinationPath "$zip
+            Expand-Archive -LiteralPath $path -DestinationPath "$zipDest" -Force:$Force
+            $iartFolderUnzipped = Join-Path $zipDest "invoke-atomicredteam-$Branch"
+            Move-Item $iartFolderUnzipped $InstallPathwIart
+            Remove-Item $zipDest -Recurse -Force
+            Remove-Item $path
+
+            if (-not (Get-InstalledModule -Name "powershell-yaml" -ErrorAction:SilentlyContinue)) {
+                Write-Verbose "Installing powershell-yaml"
+                Install-Module -Name powershell-yaml -Scope CurrentUser -Force
+            }
+
+            Write-Verbose "Importing invoke-atomicRedTeam module"
+            Import-Module $modulePath -Force
+
+            if ($getAtomics) {
+                Write-Verbose "Installing Atomics Folder"
+                Invoke-Expression (New-Object Net.WebClient).DownloadString("https://raw.githubusercontent.com/$RepoOwner/invoke-atomicredteam/$Branch/install-atomicsfolder.ps1")
+                Install-AtomicsFolder -InstallPath $InstallPath -DownloadPath $DownloadPath -Force:$Force -RepoOwner $RepoOwner -NoPayloads:$NoPayloads
+            }
+
+            Write-Host "Installation of Invoke-AtomicRedTeam is complete. You can now use the Invoke-AtomicTest function" -Fore Yellow
+            Write-Host "See Wiki at https://github.com/$repoOwner/invoke-atomicredteam/wiki for complete details" -Fore Yellow
+        }
+        else {
+            Write-Host -ForegroundColor Yellow "Atomic Redteam already exists at $InstallPathwIart. No changes were made."
+            Write-Host -ForegroundColor Cyan "Try the install again with the '-Force' parameter if you want to delete the existing installation and re-install."
+            Write-Host -ForegroundColor Red "Warning: All files within the install directory ($InstallPathwIart) will be deleted when using the '-Force' parameter."
+        }
+    }
+    Catch {
+        Write-Host -ForegroundColor Red "Installation of AtomicRedTeam Failed."
+        Write-Host $_.Exception.Message`n
+    }
+}
